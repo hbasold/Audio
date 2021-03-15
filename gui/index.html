@@ -507,7 +507,7 @@ span.mainfunction {color: #993300; font-weight: bolder}
 		{"type":"AudioSynthWaveformSineHires","data":{"defaults":{"name":{"value":"new"}},"shortName":"sine_hires","inputs":0,"outputs":2,"category":"synth-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioSynthWaveformSineModulated","data":{"defaults":{"name":{"value":"new"}},"shortName":"sine_fm","inputs":1,"outputs":1,"category":"synth-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioSynthWaveform","data":{"defaults":{"name":{"value":"new"}},"shortName":"waveform","inputs":0,"outputs":1,"category":"synth-function","color":"#E6E0F8","icon":"arrow-in.png"}},
-		{"type":"AudioSynthWaveformModulated","data":{"defaults":{"name":{"value":"new"}},"shortName":"waveformMod","inputs":2,"outputs":1,"category":"synth-function","color":"#E6E0F8","icon":"arrow-in.png"}},
+    {"type":"AudioSynthWaveformModulated","data":{"defaults":{"name":{"value":"new"}},"shortName":"waveformMod","inputs":3,"outputs":1,"category":"synth-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioSynthWaveformPWM","data":{"defaults":{"name":{"value":"new"}},"shortName":"pwm","inputs":1,"outputs":1,"category":"synth-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioSynthToneSweep","data":{"defaults":{"name":{"value":"new"}},"shortName":"tonesweep","inputs":0,"outputs":1,"category":"synth-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioSynthWaveformDc","data":{"defaults":{"name":{"value":"new"}},"shortName":"dc","inputs":0,"outputs":1,"category":"synth-function","color":"#E6E0F8","icon":"arrow-in.png"}},
@@ -3310,7 +3310,8 @@ The actual packets are taken
 		<tr class=top><th>Port</th><th>Purpose</th></tr>
 		<tr class=odd><td align=center>In 0</td><td>Frequency or Phase</td></tr>
 		<tr class=odd><td align=center>In 1</td><td>Shape (Pulse &amp; Var Triangle)</td></tr>
-		<tr class=odd><td align=center>Out 0</td><td>Waveform Output</td></tr>
+    <tr class=odd><td align=center>In 1</td><td>Hard Sync</td></tr>
+    <tr class=odd><td align=center>Out 0</td><td>Waveform Output</td></tr>
 	</table>
 	<h3>Functions</h3>
 	<p class=func><span class=keyword>begin</span>(waveform);</p>
@@ -3355,6 +3356,16 @@ The actual packets are taken
 		limit your waveform data.  Someday, "maxFreq" will be used to
 		do this automatically.
 	</p>
+  <p class=func><span class=keyword>syncThreshold</span>(threshold);</p>
+  <p class=desc>
+    Configure the waveform to be hard synced with third input.
+    The treshold is the amplitude of the derivative of the hard sync input
+    at which an edge is detected.
+    This threshold can be -1 <= n <= 1, where negative values detect falling edges,
+    positive values detect rising edges and 0 disables hard sync.
+    Default is 0.
+    Rising edges are not supported for the time being
+  </p>
 	<h3>Examples</h3>
 	<p class=exam>File &gt; Examples &gt; Audio &gt; Synthesis &gt; WaveformsModulated
 	</p>

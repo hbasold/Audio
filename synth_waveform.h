@@ -184,10 +184,12 @@ private:
 class AudioSynthWaveformModulated : public AudioStream
 {
 public:
-	AudioSynthWaveformModulated(void) : AudioStream(2, inputQueueArray),
+  AudioSynthWaveformModulated(void) : AudioStream(3, inputQueueArray),
 		phase_accumulator(0), phase_increment(0), modulation_factor(32768),
 		magnitude(0), arbdata(NULL), sample(0), tone_offset(0),
-		tone_type(WAVEFORM_SINE), modulation_type(0) {
+    tone_type(WAVEFORM_SINE), modulation_type(0),
+    trigger_threshold(0), sync_average4(0), sync_average16(0),
+    sync_derivative_average(0), edge_sync_enabled(true) {
 	}
 
 	void frequency(float freq) {
@@ -249,11 +251,26 @@ public:
 		}
 		modulation_factor = degrees * (float)(65536.0 / 180.0);
 		modulation_type = 1;
-	}
+  }
+  // The treshold can be -1 <= n <= 1, where negative values detect falling edges,
+  // positive values detect rising edges and 0 disables hard sync.
+  // Default is 0.
+  // Rising edges are not supported for the time being
+  void syncThreshold(float n) {
+    if(n < -1.0){
+      n = -1.0;
+    // } else if(n > 1.0) {
+    //   n = 1.0;
+    // }
+    } else if(n > 0) {
+      n = 0;
+    }
+    trigger_threshold = n * 65536.0;
+  }
 	virtual void update(void);
 
 private:
-	audio_block_t *inputQueueArray[2];
+  audio_block_t *inputQueueArray[3];
 	uint32_t phase_accumulator;
 	uint32_t phase_increment;
 	uint32_t modulation_factor;
@@ -265,6 +282,11 @@ private:
 	uint8_t  tone_type;
 	uint8_t  modulation_type;
         BandLimitedWaveform band_limit_waveform ;
+  int16_t trigger_threshold; // Treshold for derivative used in hard sync
+  int16_t sync_average4; // slightly filtered hard sync input
+  int32_t sync_average16; // heavily filtered and delayed sync input; used to calculate derivative
+  int16_t sync_derivative_average;
+  bool edge_sync_enabled;
 };
 
 

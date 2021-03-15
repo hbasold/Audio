@@ -34,7 +34,17 @@
 //#define IMPROVE_EXPONENTIAL_ACCURACY
 #define BASE_AMPLITUDE 0x6000  // 0x7fff won't work due to Gibb's phenomenon, so use 3/4 of full range.
 
+int16_t expAvg2(int16_t s, int16_t avg){
+  return s / 2 + avg / 2;
+}
 
+int16_t expAvg4(int16_t s, int32_t avg){
+  return s / 4 + (avg * 3) / 4;
+}
+
+int16_t expAvg16(int16_t s, int32_t avg){
+  return s / 16 + (avg * 15) / 16;
+}
 
 void AudioSynthWaveform::update(void)
 {
@@ -225,19 +235,51 @@ void AudioSynthWaveform::update(void)
 
 void AudioSynthWaveformModulated::update(void)
 {
-	audio_block_t *block, *moddata, *shapedata;
+  audio_block_t *block, *moddata, *shapedata, *syncdata = NULL;
 	int16_t *bp, *end;
 	int32_t val1, val2;
 	int16_t magnitude15;
-	uint32_t i, ph, index, index2, scale, priorphase;
+  int16_t syncVal;
+  int16_t syncDeriv;
+  uint32_t i, ph, index, index2, scale, priorphase;
 	const uint32_t inc = phase_increment;
 
 	moddata = receiveReadOnly(0);
-	shapedata = receiveReadOnly(1);
+  shapedata = receiveReadOnly(1);
+  syncdata = receiveReadOnly(2);
 
 	// Pre-compute the phase angle for every output sample of this update
 	ph = phase_accumulator;
 	priorphase = phasedata[AUDIO_BLOCK_SAMPLES-1];
+  if(syncdata && trigger_threshold != 0){
+    for (i = 0; i < AUDIO_BLOCK_SAMPLES; i++){
+      syncVal = syncdata->data[i];
+      sync_average4 = expAvg4(syncVal, sync_average4);
+      sync_average16 = expAvg16(syncVal, sync_average16);
+      syncDeriv = sync_average4 - sync_average16;
+
+      // An edge is detected when the derivative is below the threshold and decreasing.
+      // Edge-detection is then disabled until we have returned back under the threshold
+      // or the derivative is decreasing again.
+      // This works only for falling edges at the moment.
+      if(syncDeriv > trigger_threshold || syncDeriv > sync_derivative_average){
+        // No phase reset
+        ph += inc;
+        edge_sync_enabled = true;
+      }
+      else if(edge_sync_enabled) {
+        // Reset phase
+        ph = (uint32_t) INT16_MIN << 16; // The initial phase is the minimum signal value
+        edge_sync_enabled = false;
+      }
+
+      sync_derivative_average = expAvg2(syncDeriv, sync_derivative_average);
+      phasedata[i] = ph;
+
+    }
+    if(moddata) release(moddata);
+  }
+  else {
 	if (moddata && modulation_type == 0) {
 		// Frequency Modulation
 		bp = moddata->data;
@@ -291,8 +333,11 @@ void AudioSynthWaveformModulated::update(void)
 			phasedata[i] = ph;
 			ph += inc;
 		}
-	}
-	phase_accumulator = ph;
+  }
+}
+  phase_accumulator = ph;
+
+  if(syncdata) release(syncdata);
 
 	// If the amplitude is zero, no output, but phase still increments properly
 	if (magnitude == 0) {
