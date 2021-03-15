@@ -233,14 +233,81 @@ void AudioSynthWaveform::update(void)
 
 //--------------------------------------------------------------------------------
 
+inline uint32_t freqMod(uint32_t inc, uint32_t modulation_factor, int16_t mod, uint32_t ph){
+  int32_t n = mod * modulation_factor; // n is # of octaves to mod
+  int32_t ipart = n >> 27; // 4 integer bits
+  n &= 0x7FFFFFF;          // 27 fractional bits
+#ifdef IMPROVE_EXPONENTIAL_ACCURACY
+  // exp2 polynomial suggested by Stefan Stenzel on "music-dsp"
+  // mail list, Wed, 3 Sep 2014 10:08:55 +0200
+  int32_t x = n << 3;
+  n = multiply_accumulate_32x32_rshift32_rounded(536870912, x, 1494202713);
+  int32_t sq = multiply_32x32_rshift32_rounded(x, x);
+  n = multiply_accumulate_32x32_rshift32_rounded(n, sq, 1934101615);
+  n = n + (multiply_32x32_rshift32_rounded(sq,
+                                           multiply_32x32_rshift32_rounded(x, 1358044250)) << 1);
+  n = n << 1;
+#else
+  // exp2 algorithm by Laurent de Soras
+  // https://www.musicdsp.org/en/latest/Other/106-fast-exp2-approximation.html
+  n = (n + 134217728) << 3;
+
+  n = multiply_32x32_rshift32_rounded(n, n);
+  n = multiply_32x32_rshift32_rounded(n, 715827883) << 3;
+  n = n + 715827882;
+#endif
+  uint32_t scale = n >> (14 - ipart);
+  uint64_t phstep = (uint64_t)inc * scale;
+  uint32_t phstep_msw = phstep >> 32;
+  if (phstep_msw < 0x7FFE) {
+    return ph + (phstep >> 16);
+  } else {
+    return ph + 0x7FFE0000;
+  }
+}
+
+uint32_t AudioSynthWaveformModulated::modWithSync(audio_block_t* moddata, audio_block_t* syncdata, uint32_t initialPhase){
+
+  uint32_t ph = initialPhase;
+  int16_t syncVal;
+  int16_t syncDeriv;
+  const uint32_t inc = phase_increment;
+
+  for (uint32_t i = 0; i < AUDIO_BLOCK_SAMPLES; i++){
+    syncVal = syncdata->data[i];
+    sync_average4 = expAvg4(syncVal, sync_average4);
+    sync_average16 = expAvg16(syncVal, sync_average16);
+    syncDeriv = sync_average4 - sync_average16;
+
+    // An edge is detected when the derivative is below the threshold and decreasing.
+    // Edge-detection is then disabled until we have returned back under the threshold
+    // or the derivative is decreasing again.
+    // This works only for falling edges at the moment.
+    if(syncDeriv > trigger_threshold || syncDeriv > sync_derivative_average){
+      // No phase reset
+      ph += inc;
+      edge_sync_enabled = true;
+    }
+    else if(edge_sync_enabled) {
+      // Reset phase
+      ph = (uint32_t) INT16_MIN << 16; // The initial phase is the minimum signal value
+      edge_sync_enabled = false;
+    }
+
+    sync_derivative_average = expAvg2(syncDeriv, sync_derivative_average);
+    phasedata[i] = ph;
+
+  }
+  return ph;
+}
+
+
 void AudioSynthWaveformModulated::update(void)
 {
   audio_block_t *block, *moddata, *shapedata, *syncdata = NULL;
 	int16_t *bp, *end;
 	int32_t val1, val2;
 	int16_t magnitude15;
-  int16_t syncVal;
-  int16_t syncDeriv;
   uint32_t i, ph, index, index2, scale, priorphase;
 	const uint32_t inc = phase_increment;
 
@@ -252,69 +319,16 @@ void AudioSynthWaveformModulated::update(void)
 	ph = phase_accumulator;
 	priorphase = phasedata[AUDIO_BLOCK_SAMPLES-1];
   if(syncdata && trigger_threshold != 0){
-    for (i = 0; i < AUDIO_BLOCK_SAMPLES; i++){
-      syncVal = syncdata->data[i];
-      sync_average4 = expAvg4(syncVal, sync_average4);
-      sync_average16 = expAvg16(syncVal, sync_average16);
-      syncDeriv = sync_average4 - sync_average16;
-
-      // An edge is detected when the derivative is below the threshold and decreasing.
-      // Edge-detection is then disabled until we have returned back under the threshold
-      // or the derivative is decreasing again.
-      // This works only for falling edges at the moment.
-      if(syncDeriv > trigger_threshold || syncDeriv > sync_derivative_average){
-        // No phase reset
-        ph += inc;
-        edge_sync_enabled = true;
-      }
-      else if(edge_sync_enabled) {
-        // Reset phase
-        ph = (uint32_t) INT16_MIN << 16; // The initial phase is the minimum signal value
-        edge_sync_enabled = false;
-      }
-
-      sync_derivative_average = expAvg2(syncDeriv, sync_derivative_average);
-      phasedata[i] = ph;
-
-    }
+    ph = modWithSync(moddata, syncdata, ph);
     if(moddata) release(moddata);
   }
   else {
 	if (moddata && modulation_type == 0) {
 		// Frequency Modulation
 		bp = moddata->data;
-		for (i=0; i < AUDIO_BLOCK_SAMPLES; i++) {
-			int32_t n = (*bp++) * modulation_factor; // n is # of octaves to mod
-			int32_t ipart = n >> 27; // 4 integer bits
-			n &= 0x7FFFFFF;          // 27 fractional bits
-			#ifdef IMPROVE_EXPONENTIAL_ACCURACY
-			// exp2 polynomial suggested by Stefan Stenzel on "music-dsp"
-			// mail list, Wed, 3 Sep 2014 10:08:55 +0200
-			int32_t x = n << 3;
-			n = multiply_accumulate_32x32_rshift32_rounded(536870912, x, 1494202713);
-			int32_t sq = multiply_32x32_rshift32_rounded(x, x);
-			n = multiply_accumulate_32x32_rshift32_rounded(n, sq, 1934101615);
-			n = n + (multiply_32x32_rshift32_rounded(sq,
-				multiply_32x32_rshift32_rounded(x, 1358044250)) << 1);
-			n = n << 1;
-			#else
-			// exp2 algorithm by Laurent de Soras
-			// https://www.musicdsp.org/en/latest/Other/106-fast-exp2-approximation.html
-			n = (n + 134217728) << 3;
-
-			n = multiply_32x32_rshift32_rounded(n, n);
-			n = multiply_32x32_rshift32_rounded(n, 715827883) << 3;
-			n = n + 715827882;
-			#endif
-			uint32_t scale = n >> (14 - ipart);
-			uint64_t phstep = (uint64_t)inc * scale;
-			uint32_t phstep_msw = phstep >> 32;
-			if (phstep_msw < 0x7FFE) {
-				ph += phstep >> 16;
-			} else {
-				ph += 0x7FFE0000;
-			}
-			phasedata[i] = ph;
+    for (i=0; i < AUDIO_BLOCK_SAMPLES; i++) {
+      ph = freqMod(inc, modulation_factor, *bp++, ph);
+      phasedata[i] = ph;
 		}
 		release(moddata);
 	} else if (moddata) {

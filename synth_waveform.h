@@ -267,7 +267,10 @@ public:
     }
     trigger_threshold = n * 65536.0;
   }
-	virtual void update(void);
+  virtual void update(void);
+
+private:
+  uint32_t modWithSync(audio_block_t* moddata, audio_block_t* syncdata, uint32_t initialPhase);
 
 private:
   audio_block_t *inputQueueArray[3];
