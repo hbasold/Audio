@@ -35,7 +35,7 @@
 #define BASE_AMPLITUDE 0x6000  // 0x7fff won't work due to Gibb's phenomenon, so use 3/4 of full range.
 
 int16_t expAvg2(int16_t s, int16_t avg){
-  return s / 2 + avg / 2;
+  return signed_halving_add_16_and_16(s, avg);
 }
 
 int16_t expAvg4(int16_t s, int32_t avg){
@@ -270,34 +270,61 @@ uint32_t AudioSynthWaveformModulated::modWithSync(audio_block_t* moddata, audio_
 
   uint32_t ph = initialPhase;
   int16_t syncVal;
-  int16_t syncDeriv;
+  int32_t syncDeriv;
+  bool noTrigger;
   const uint32_t inc = phase_increment;
+
+  int16_t *bp = moddata ? moddata->data : NULL;
 
   for (uint32_t i = 0; i < AUDIO_BLOCK_SAMPLES; i++){
     syncVal = syncdata->data[i];
     sync_average4 = expAvg4(syncVal, sync_average4);
     sync_average16 = expAvg16(syncVal, sync_average16);
-    syncDeriv = sync_average4 - sync_average16;
+    syncDeriv = signed_subtract_16_and_16(sync_average4, sync_average16);
 
     // An edge is detected when the derivative is below the threshold and decreasing.
     // Edge-detection is then disabled until we have returned back under the threshold
     // or the derivative is decreasing again.
     // This works only for falling edges at the moment.
-    if(syncDeriv > trigger_threshold || syncDeriv > sync_derivative_average){
+    noTrigger = syncDeriv > trigger_threshold || syncDeriv > sync_derivative_average;
+    if (noTrigger || !edge_sync_enabled) {
       // No phase reset
-      ph += inc;
-      edge_sync_enabled = true;
+
+      // Allow sync again to trigger
+      if(noTrigger){
+        edge_sync_enabled = true;
+      }
+
+      // Compute phase depending on modulation type
+      if (moddata && modulation_type == 0) {
+        // Frequency Modulation
+        ph = freqMod(inc, modulation_factor, *bp++, ph);
+        phasedata[i] = ph;
+      } else if (moddata) {
+        // Phase Modulation
+        // more than +/- 180 deg shift by 32 bit overflow of "n"
+        uint32_t n = ((uint32_t)(*bp++)) * modulation_factor;
+        phasedata[i] = ph + n;
+        ph += inc;
+      } else {
+        // No Modulation Input
+        phasedata[i] = ph;
+        ph += inc;
+      }
     }
-    else if(edge_sync_enabled) {
+    else {
+      // Disable sync trigger until edge has been passed (the derivative goes down again)
+      edge_sync_enabled = false;
+
       // Reset phase
       ph = (uint32_t) INT16_MIN << 16; // The initial phase is the minimum signal value
-      edge_sync_enabled = false;
+      phasedata[i] = ph;
     }
 
     sync_derivative_average = expAvg2(syncDeriv, sync_derivative_average);
-    phasedata[i] = ph;
 
   }
+
   return ph;
 }
 
